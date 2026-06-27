@@ -52,11 +52,63 @@ function calculateDuration(clockInTime: any, clockOutTime: any) {
   }
 }
 
+function getDurationMinutes(clockInTime: any, clockOutTime: any) {
+  if (!clockInTime || !clockOutTime) return 0;
+
+  try {
+    const start = clockInTime.toDate();
+    const end = clockOutTime.toDate();
+
+    const diffMs = end.getTime() - start.getTime();
+    return Math.max(0, Math.floor(diffMs / 1000 / 60));
+  } catch {
+    return 0;
+  }
+}
+
+function formatMinutes(totalMinutes: number) {
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  return `${hours}h ${minutes}m`;
+}
+
+function isThisWeek(timestamp: any) {
+  if (!timestamp) return false;
+
+  try {
+    const date = timestamp.toDate();
+    const now = new Date();
+
+    const startOfWeek = new Date(now);
+    startOfWeek.setDate(now.getDate() - now.getDay());
+    startOfWeek.setHours(0, 0, 0, 0);
+
+    const endOfWeek = new Date(startOfWeek);
+    endOfWeek.setDate(startOfWeek.getDate() + 7);
+
+    return date >= startOfWeek && date < endOfWeek;
+  } catch {
+    return false;
+  }
+}
+
 export default function TimesheetsScreen() {
   const [user, setUser] = useState<User | null>(null);
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  const thisWeekEntries = entries.filter((entry) => isThisWeek(entry.clockInTime));
+
+  const thisWeekMinutes = thisWeekEntries.reduce((total, entry) => {
+    return total + getDurationMinutes(entry.clockInTime, entry.clockOutTime);
+  }, 0);
+
+  const activeEntries = entries.filter((entry) => entry.status === "clocked_in").length;
+  const completedThisWeek = thisWeekEntries.filter(
+    (entry) => entry.status === "clocked_out"
+  ).length;
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -141,6 +193,28 @@ export default function TimesheetsScreen() {
       >
         <Text style={styles.title}>Timesheets</Text>
         <Text style={styles.subtitle}>Your recent time entries</Text>
+
+        <View style={styles.summaryCard}>
+        <Text style={styles.summaryTitle}>This Week</Text>
+
+        <View style={styles.summaryRow}>
+          <View>
+            <Text style={styles.summaryLabel}>Total Hours</Text>
+            <Text style={styles.summaryValue}>{formatMinutes(thisWeekMinutes)}</Text>
+          </View>
+
+          <View>
+            <Text style={styles.summaryLabel}>Completed Shifts</Text>
+            <Text style={styles.summaryValue}>{completedThisWeek}</Text>
+          </View>
+        </View>
+
+        {activeEntries > 0 && (
+          <Text style={styles.activeNotice}>
+            You currently have an active clock-in.
+          </Text>
+        )}
+        </View>
 
         <Pressable style={styles.refreshButton} onPress={handleRefresh}>
           <Text style={styles.refreshButtonText}>Refresh</Text>
@@ -298,5 +372,38 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#64748b",
     textAlign: "center",
+  },
+  summaryCard: {
+    backgroundColor: "#0f172a",
+    borderRadius: 16,
+    padding: 18,
+    marginBottom: 16,
+  },
+  summaryTitle: {
+    color: "white",
+    fontSize: 18,
+    fontWeight: "800",
+    marginBottom: 12,
+  },
+  summaryRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  summaryLabel: {
+    color: "#cbd5e1",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  summaryValue: {
+    color: "white",
+    fontSize: 24,
+    fontWeight: "800",
+    marginTop: 4,
+  },
+  activeNotice: {
+    color: "#bbf7d0",
+    fontWeight: "700",
+    marginTop: 14,
   },
 });
