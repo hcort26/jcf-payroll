@@ -11,8 +11,11 @@ import {
   addDoc,
   collection,
   doc,
+  getDocs,
+  query,
   serverTimestamp,
-  updateDoc
+  updateDoc,
+  where
 } from "firebase/firestore";
 import React, { useEffect, useState } from "react";
 import {
@@ -41,15 +44,27 @@ export default function HomeScreen() {
   const [clockOutTime, setClockOutTime] = useState<string | null>(null);
   const [locationText, setLocationText] = useState("No location saved yet");
   const [loading, setLoading] = useState(false);
+  const [loadingActiveEntry, setLoadingActiveEntry] = useState(false);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       setCheckingAuth(false);
     });
-
+  
     return unsubscribe;
   }, []);
+  
+  useEffect(() => {
+    if (user) {
+      loadActiveTimeEntry(user);
+    } else {
+      setStatus("clocked_out");
+      setActiveEntryId(null);
+      setClockInTime(null);
+      setClockOutTime(null);
+    }
+  }, [user]);
 
   async function login() {
     try {
@@ -73,6 +88,51 @@ export default function HomeScreen() {
     }
   }
 
+  async function loadActiveTimeEntry(currentUser: User) {
+    try {
+      setLoadingActiveEntry(true);
+  
+      console.log("Checking active entry for:", currentUser.uid);
+  
+      const q = query(
+        collection(db, "time_entries"),
+        where("userId", "==", currentUser.uid),
+        where("status", "==", "clocked_in")
+      );
+  
+      const snapshot = await getDocs(q);
+  
+      console.log("Active entries found:", snapshot.size);
+  
+      if (!snapshot.empty) {
+        const activeDoc = snapshot.docs[0];
+        const data = activeDoc.data();
+  
+        setActiveEntryId(activeDoc.id);
+        setStatus("clocked_in");
+        setClockInTime("Loaded from Firebase");
+        setClockOutTime(null);
+  
+        setLocationText(
+          data.clockInLocation
+            ? `Loaded active clock-in. Lat: ${data.clockInLocation.latitude?.toFixed?.(5)}, Long: ${data.clockInLocation.longitude?.toFixed?.(5)}`
+            : "Active clock-in loaded from Firebase."
+        );
+  
+        return;
+      }
+  
+      setActiveEntryId(null);
+      setStatus("clocked_out");
+      setClockInTime(null);
+      setClockOutTime(null);
+    } catch (error: any) {
+      console.log("Failed to load active time entry:", error);
+      Alert.alert("Load failed", error.message);
+    } finally {
+      setLoadingActiveEntry(false);
+    }
+  }
   async function getLocation() {
     const permission = await Location.requestForegroundPermissionsAsync();
 
@@ -170,7 +230,7 @@ export default function HomeScreen() {
     }
   }
 
-  if (checkingAuth) {
+  if (checkingAuth || loadingActiveEntry) {
     return (
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.center}>
