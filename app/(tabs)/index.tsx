@@ -1,5 +1,20 @@
-import * as Location from 'expo-location';
-import React, { useState } from 'react';
+import { auth, db } from "@/src/firebase";
+import * as Location from "expo-location";
+import {
+  createUserWithEmailAndPassword,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signOut,
+  User
+} from "firebase/auth";
+import {
+  addDoc,
+  collection,
+  doc,
+  serverTimestamp,
+  updateDoc
+} from "firebase/firestore";
+import React, { useEffect, useState } from "react";
 import {
   Alert,
   Pressable,
@@ -7,23 +22,62 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View
-} from 'react-native';
+} from "react-native";
 
-type ClockStatus = 'clocked_out' | 'clocked_in';
+type ClockStatus = "clocked_out" | "clocked_in";
 
 export default function HomeScreen() {
-  const [status, setStatus] = useState<ClockStatus>('clocked_out');
+  const [user, setUser] = useState<User | null>(null);
+  const [checkingAuth, setCheckingAuth] = useState(true);
+
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  const [status, setStatus] = useState<ClockStatus>("clocked_out");
+  const [activeEntryId, setActiveEntryId] = useState<string | null>(null);
   const [clockInTime, setClockInTime] = useState<string | null>(null);
   const [clockOutTime, setClockOutTime] = useState<string | null>(null);
-  const [locationText, setLocationText] = useState<string>('No location saved yet');
+  const [locationText, setLocationText] = useState("No location saved yet");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setCheckingAuth(false);
+    });
+
+    return unsubscribe;
+  }, []);
+
+  async function login() {
+    try {
+      setLoading(true);
+      await signInWithEmailAndPassword(auth, email.trim(), password);
+    } catch (error: any) {
+      Alert.alert("Login failed", error.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function register() {
+    try {
+      setLoading(true);
+      await createUserWithEmailAndPassword(auth, email.trim(), password);
+    } catch (error: any) {
+      Alert.alert("Registration failed", error.message);
+    } finally {
+      setLoading(false);
+    }
+  }
 
   async function getLocation() {
     const permission = await Location.requestForegroundPermissionsAsync();
 
-    if (permission.status !== 'granted') {
-      throw new Error('Location permission is required to clock in or out.');
+    if (permission.status !== "granted") {
+      throw new Error("Location permission is required to clock in or out.");
     }
 
     const location = await Location.getCurrentPositionAsync({});
@@ -36,13 +90,32 @@ export default function HomeScreen() {
   }
 
   async function handleClockIn() {
+    if (!user) return;
+
     try {
       setLoading(true);
 
       const location = await getLocation();
       const now = new Date();
 
-      setStatus('clocked_in');
+      const docRef = await addDoc(collection(db, "time_entries"), {
+        userId: user.uid,
+        userEmail: user.email,
+        companyId: "jcf-demo-company",
+        jobSiteId: "main-job-site",
+        jobSiteName: "Main Job Site",
+        status: "clocked_in",
+        clockInTime: serverTimestamp(),
+        clockOutTime: null,
+        clockInLocation: location,
+        clockOutLocation: null,
+        approved: false,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+
+      setActiveEntryId(docRef.id);
+      setStatus("clocked_in");
       setClockInTime(now.toLocaleTimeString());
       setClockOutTime(null);
 
@@ -52,22 +125,35 @@ export default function HomeScreen() {
         )}, Accuracy: ${Math.round(location.accuracy ?? 0)}m`
       );
 
-      Alert.alert('Clocked In', 'Your clock-in was saved locally.');
+      Alert.alert("Clocked In", "Your clock-in was saved to Firebase.");
     } catch (error: any) {
-      Alert.alert('Clock-in failed', error.message);
+      Alert.alert("Clock-in failed", error.message);
     } finally {
       setLoading(false);
     }
   }
 
   async function handleClockOut() {
+    if (!user || !activeEntryId) {
+      Alert.alert("Error", "No active time entry found.");
+      return;
+    }
+
     try {
       setLoading(true);
 
       const location = await getLocation();
       const now = new Date();
 
-      setStatus('clocked_out');
+      await updateDoc(doc(db, "time_entries", activeEntryId), {
+        status: "clocked_out",
+        clockOutTime: serverTimestamp(),
+        clockOutLocation: location,
+        updatedAt: serverTimestamp(),
+      });
+
+      setStatus("clocked_out");
+      setActiveEntryId(null);
       setClockOutTime(now.toLocaleTimeString());
 
       setLocationText(
@@ -76,12 +162,58 @@ export default function HomeScreen() {
         )}, Accuracy: ${Math.round(location.accuracy ?? 0)}m`
       );
 
-      Alert.alert('Clocked Out', 'Your clock-out was saved locally.');
+      Alert.alert("Clocked Out", "Your clock-out was saved to Firebase.");
     } catch (error: any) {
-      Alert.alert('Clock-out failed', error.message);
+      Alert.alert("Clock-out failed", error.message);
     } finally {
       setLoading(false);
     }
+  }
+
+  if (checkingAuth) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.center}>
+          <Text>Loading...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (!user) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.loginContainer}>
+          <Text style={styles.companyName}>JCF Payroll</Text>
+          <Text style={styles.subtitle}>Employee Login</Text>
+
+          <TextInput
+            style={styles.input}
+            placeholder="Email"
+            autoCapitalize="none"
+            keyboardType="email-address"
+            value={email}
+            onChangeText={setEmail}
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Password"
+            secureTextEntry
+            value={password}
+            onChangeText={setPassword}
+          />
+
+          <Pressable style={styles.primaryButton} onPress={login} disabled={loading}>
+            <Text style={styles.buttonText}>{loading ? "Loading..." : "Log In"}</Text>
+          </Pressable>
+
+          <Pressable style={styles.secondaryButton} onPress={register} disabled={loading}>
+            <Text style={styles.secondaryText}>Create Test Account</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
   }
 
   return (
@@ -90,16 +222,18 @@ export default function HomeScreen() {
         <Text style={styles.companyName}>JCF Payroll</Text>
         <Text style={styles.subtitle}>Employee Time Clock</Text>
 
+        <Text style={styles.loggedInText}>Signed in as {user.email}</Text>
+
         <View style={styles.card}>
           <Text style={styles.label}>Current Status</Text>
 
           <Text
             style={[
               styles.status,
-              status === 'clocked_in' ? styles.statusIn : styles.statusOut,
+              status === "clocked_in" ? styles.statusIn : styles.statusOut,
             ]}
           >
-            {status === 'clocked_in' ? 'Clocked In' : 'Clocked Out'}
+            {status === "clocked_in" ? "Clocked In" : "Clocked Out"}
           </Text>
 
           <View style={styles.divider} />
@@ -108,22 +242,22 @@ export default function HomeScreen() {
           <Text style={styles.infoText}>Main Job Site</Text>
 
           <Text style={styles.infoTitle}>Clock In Time</Text>
-          <Text style={styles.infoText}>{clockInTime ?? 'Not clocked in yet'}</Text>
+          <Text style={styles.infoText}>{clockInTime ?? "Not clocked in yet"}</Text>
 
           <Text style={styles.infoTitle}>Clock Out Time</Text>
-          <Text style={styles.infoText}>{clockOutTime ?? 'No clock-out yet'}</Text>
+          <Text style={styles.infoText}>{clockOutTime ?? "No clock-out yet"}</Text>
 
           <Text style={styles.infoTitle}>Last Saved Location</Text>
           <Text style={styles.infoText}>{locationText}</Text>
 
-          {status === 'clocked_out' ? (
+          {status === "clocked_out" ? (
             <Pressable
               style={[styles.button, styles.clockInButton]}
               onPress={handleClockIn}
               disabled={loading}
             >
               <Text style={styles.buttonText}>
-                {loading ? 'Saving...' : 'Clock In'}
+                {loading ? "Saving..." : "Clock In"}
               </Text>
             </Pressable>
           ) : (
@@ -133,19 +267,15 @@ export default function HomeScreen() {
               disabled={loading}
             >
               <Text style={styles.buttonText}>
-                {loading ? 'Saving...' : 'Clock Out'}
+                {loading ? "Saving..." : "Clock Out"}
               </Text>
             </Pressable>
           )}
         </View>
 
-        <View style={styles.smallCard}>
-          <Text style={styles.smallCardTitle}>Next Features</Text>
-          <Text style={styles.bullet}>• Employee login</Text>
-          <Text style={styles.bullet}>• Save time entries to Firebase</Text>
-          <Text style={styles.bullet}>• Job-site GPS validation</Text>
-          <Text style={styles.bullet}>• Admin payroll dashboard</Text>
-        </View>
+        <Pressable style={styles.logoutButton} onPress={() => signOut(auth)}>
+          <Text style={styles.logoutText}>Log Out</Text>
+        </Pressable>
       </ScrollView>
     </SafeAreaView>
   );
@@ -154,7 +284,17 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#f8fafc',
+    backgroundColor: "#f8fafc",
+  },
+  center: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  loginContainer: {
+    flex: 1,
+    padding: 24,
+    justifyContent: "center",
   },
   container: {
     padding: 24,
@@ -162,93 +302,111 @@ const styles = StyleSheet.create({
   },
   companyName: {
     fontSize: 36,
-    fontWeight: '800',
-    color: '#0f172a',
-    textAlign: 'center',
+    fontWeight: "800",
+    color: "#0f172a",
+    textAlign: "center",
     marginTop: 20,
   },
   subtitle: {
     fontSize: 16,
-    color: '#64748b',
-    textAlign: 'center',
-    marginBottom: 28,
+    color: "#64748b",
+    textAlign: "center",
+    marginBottom: 20,
+  },
+  loggedInText: {
+    textAlign: "center",
+    color: "#475569",
+    marginBottom: 20,
+  },
+  input: {
+    backgroundColor: "white",
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 12,
+    fontSize: 16,
+  },
+  primaryButton: {
+    backgroundColor: "#0f172a",
+    padding: 16,
+    borderRadius: 12,
+    alignItems: "center",
+    marginTop: 8,
+  },
+  secondaryButton: {
+    marginTop: 16,
+    alignItems: "center",
+  },
+  secondaryText: {
+    color: "#2563eb",
+    fontWeight: "700",
   },
   card: {
-    backgroundColor: 'white',
+    backgroundColor: "white",
     borderRadius: 18,
     padding: 22,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
-    shadowColor: '#000',
+    borderColor: "#e2e8f0",
+    shadowColor: "#000",
     shadowOpacity: 0.08,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 4 },
   },
   label: {
     fontSize: 14,
-    color: '#64748b',
+    color: "#64748b",
     marginBottom: 4,
   },
   status: {
     fontSize: 32,
-    fontWeight: '800',
+    fontWeight: "800",
   },
   statusIn: {
-    color: '#16a34a',
+    color: "#16a34a",
   },
   statusOut: {
-    color: '#dc2626',
+    color: "#dc2626",
   },
   divider: {
     height: 1,
-    backgroundColor: '#e2e8f0',
+    backgroundColor: "#e2e8f0",
     marginVertical: 20,
   },
   infoTitle: {
     fontSize: 13,
-    color: '#64748b',
-    fontWeight: '700',
+    color: "#64748b",
+    fontWeight: "700",
     marginTop: 12,
     marginBottom: 4,
   },
   infoText: {
     fontSize: 16,
-    color: '#0f172a',
+    color: "#0f172a",
   },
   button: {
     marginTop: 26,
     paddingVertical: 18,
     borderRadius: 14,
-    alignItems: 'center',
+    alignItems: "center",
   },
   clockInButton: {
-    backgroundColor: '#16a34a',
+    backgroundColor: "#16a34a",
   },
   clockOutButton: {
-    backgroundColor: '#dc2626',
+    backgroundColor: "#dc2626",
   },
   buttonText: {
-    color: 'white',
+    color: "white",
     fontSize: 18,
-    fontWeight: '800',
+    fontWeight: "800",
   },
-  smallCard: {
-    backgroundColor: 'white',
-    borderRadius: 16,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    marginTop: 18,
+  logoutButton: {
+    marginTop: 24,
+    alignItems: "center",
   },
-  smallCardTitle: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: '#0f172a',
-    marginBottom: 8,
-  },
-  bullet: {
-    fontSize: 15,
-    color: '#334155',
-    marginTop: 4,
+  logoutText: {
+    color: "#2563eb",
+    fontWeight: "700",
   },
 });
