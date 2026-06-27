@@ -31,9 +31,23 @@ import {
 
 type ClockStatus = "clocked_out" | "clocked_in";
 
+type JobSite = {
+  id: string;
+  name: string;
+  companyId: string;
+  address?: string;
+  latitude: number;
+  longitude: number;
+  radiusMeters: number;
+  active: boolean;
+};
+
 export default function HomeScreen() {
   const [user, setUser] = useState<User | null>(null);
   const [checkingAuth, setCheckingAuth] = useState(true);
+
+  const [jobSites, setJobSites] = useState<JobSite[]>([]);
+  const [selectedJobSite, setSelectedJobSite] = useState<JobSite | null>(null);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -63,6 +77,12 @@ export default function HomeScreen() {
       setActiveEntryId(null);
       setClockInTime(null);
       setClockOutTime(null);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (user) {
+      loadJobSites();
     }
   }, [user]);
 
@@ -133,6 +153,49 @@ export default function HomeScreen() {
       setLoadingActiveEntry(false);
     }
   }
+
+  async function loadJobSites() {
+    try {
+      console.log("Loading job sites...");
+  
+      const q = query(
+        collection(db, "job_sites"),
+        where("companyId", "==", "jcf-enterprise"),
+        where("active", "==", true)
+      );
+  
+      const snapshot = await getDocs(q);
+  
+      console.log("Job sites found:", snapshot.size);
+  
+      const sites: JobSite[] = snapshot.docs.map((docSnap) => {
+        const data = docSnap.data();
+  
+        console.log("Job site data:", docSnap.id, data);
+  
+        return {
+          id: docSnap.id,
+          name: data.name,
+          companyId: data.companyId,
+          address: data.address,
+          latitude: data.latitude,
+          longitude: data.longitude,
+          radiusMeters: data.radiusMeters,
+          active: data.active,
+        };
+      });
+  
+      setJobSites(sites);
+  
+      if (sites.length > 0) {
+        setSelectedJobSite(sites[0]);
+      }
+    } catch (error: any) {
+      console.log("Failed to load job sites:", error);
+      Alert.alert("Job sites failed", error.message);
+    }
+  }
+
   async function getLocation() {
     const permission = await Location.requestForegroundPermissionsAsync();
 
@@ -158,12 +221,20 @@ export default function HomeScreen() {
       const location = await getLocation();
       const now = new Date();
 
+      if (!selectedJobSite) {
+        Alert.alert("No job site selected", "Please select a job site before clocking in.");
+        return;
+      }
+
       const docRef = await addDoc(collection(db, "time_entries"), {
         userId: user.uid,
         userEmail: user.email,
-        companyId: "jcf-demo-company",
-        jobSiteId: "main-job-site",
-        jobSiteName: "Main Job Site",
+        companyId: "jcf-enterprise",
+        jobSiteId: selectedJobSite.id,
+        jobSiteName: selectedJobSite.name,
+        jobSiteLatitude: selectedJobSite.latitude,
+        jobSiteLongitude: selectedJobSite.longitude,
+        jobSiteRadiusMeters: selectedJobSite.radiusMeters,
         status: "clocked_in",
         clockInTime: serverTimestamp(),
         clockOutTime: null,
@@ -299,7 +370,37 @@ export default function HomeScreen() {
           <View style={styles.divider} />
 
           <Text style={styles.infoTitle}>Job Site</Text>
-          <Text style={styles.infoText}>Main Job Site</Text>
+
+          <Text style={styles.infoTitle}>Job Site</Text>
+
+          <View style={styles.jobSiteList}>
+            {jobSites.length === 0 ? (
+              <Text style={styles.noJobSitesText}>
+                No job sites loaded. Check Firestore job_sites collection.
+              </Text>
+            ) : (
+              jobSites.map((site) => (
+                <Pressable
+                  key={site.id}
+                  style={[
+                    styles.jobSiteOption,
+                    selectedJobSite?.id === site.id && styles.jobSiteOptionSelected,
+                  ]}
+                  onPress={() => setSelectedJobSite(site)}
+                  disabled={status === "clocked_in"}
+                >
+                  <Text
+                    style={[
+                      styles.jobSiteOptionText,
+                      selectedJobSite?.id === site.id && styles.jobSiteOptionTextSelected,
+                    ]}
+                  >
+                    {site.name}
+                  </Text>
+                </Pressable>
+              ))
+            )}
+          </View>
 
           <Text style={styles.infoTitle}>Clock In Time</Text>
           <Text style={styles.infoText}>{clockInTime ?? "Not clocked in yet"}</Text>
@@ -468,5 +569,36 @@ const styles = StyleSheet.create({
   logoutText: {
     color: "#2563eb",
     fontWeight: "700",
+  },
+  jobSiteList: {
+    gap: 8,
+    marginTop: 6,
+    marginBottom: 8,
+  },
+  jobSiteOption: {
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    backgroundColor: "#ffffff",
+  },
+  jobSiteOptionSelected: {
+    borderColor: "#0f172a",
+    backgroundColor: "#e2e8f0",
+  },
+  jobSiteOptionText: {
+    fontSize: 15,
+    color: "#334155",
+    fontWeight: "600",
+  },
+  jobSiteOptionTextSelected: {
+    color: "#0f172a",
+    fontWeight: "800",
+  },
+  noJobSitesText: {
+    color: "#dc2626",
+    fontSize: 14,
+    marginTop: 6,
+    marginBottom: 8,
   },
 });
