@@ -371,8 +371,6 @@ export default function HomeScreen() {
 
           <Text style={styles.infoTitle}>Job Site</Text>
 
-          <Text style={styles.infoTitle}>Job Site</Text>
-
           <View style={styles.jobSiteList}>
             {jobSites.length === 0 ? (
               <Text style={styles.noJobSitesText}>
