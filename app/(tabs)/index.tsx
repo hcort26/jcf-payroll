@@ -11,9 +11,11 @@ import {
   addDoc,
   collection,
   doc,
+  getDoc,
   getDocs,
   query,
   serverTimestamp,
+  setDoc,
   updateDoc,
   where
 } from "firebase/firestore";
@@ -28,6 +30,8 @@ import {
   TextInput,
   View
 } from "react-native";
+
+const COMPANY_ID = "jcf-enterprise";
 
 type ClockStatus = "clocked_out" | "clocked_in";
 
@@ -45,6 +49,9 @@ type JobSite = {
 export default function HomeScreen() {
   const [user, setUser] = useState<User | null>(null);
   const [checkingAuth, setCheckingAuth] = useState(true);
+
+  const [employeeApproved, setEmployeeApproved] = useState(false);
+  const [checkingEmployee, setCheckingEmployee] = useState(false);
 
   const [jobSites, setJobSites] = useState<JobSite[]>([]);
   const [selectedJobSite, setSelectedJobSite] = useState<JobSite | null>(null);
@@ -70,20 +77,21 @@ export default function HomeScreen() {
   }, []);
   
   useEffect(() => {
-    if (user) {
-      loadActiveTimeEntry(user);
-    } else {
-      setStatus("clocked_out");
-      setActiveEntryId(null);
-      setClockInTime(null);
-      setClockOutTime(null);
+    async function loadUserData() {
+      if (user) {
+        await checkEmployeeApproval(user);
+        await loadActiveTimeEntry(user);
+        await loadJobSites();
+      } else {
+        setEmployeeApproved(false);
+        setStatus("clocked_out");
+        setActiveEntryId(null);
+        setClockInTime(null);
+        setClockOutTime(null);
+      }
     }
-  }, [user]);
-
-  useEffect(() => {
-    if (user) {
-      loadJobSites();
-    }
+  
+    loadUserData();
   }, [user]);
 
   async function login() {
@@ -99,12 +107,67 @@ export default function HomeScreen() {
 
   async function register() {
     try {
+      const cleanedEmail = email.trim().toLowerCase();
+  
+      if (!cleanedEmail.includes("@") || !cleanedEmail.includes(".")) {
+        Alert.alert("Invalid email", "Please enter a valid email like test@jcf.com.");
+        return;
+      }
+  
+      if (password.length < 6) {
+        Alert.alert("Weak password", "Password must be at least 6 characters.");
+        return;
+      }
+  
       setLoading(true);
-      await createUserWithEmailAndPassword(auth, email.trim(), password);
+  
+      const userCredential = await createUserWithEmailAndPassword(
+        auth,
+        cleanedEmail,
+        password
+      );
+  
+      await setDoc(doc(db, "employees", userCredential.user.uid), {
+        uid: userCredential.user.uid,
+        email: cleanedEmail,
+        companyId: COMPANY_ID,
+        role: "employee",
+        approved: false,
+        active: false,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+  
+      Alert.alert(
+        "Account created",
+        "Your account is pending admin approval."
+      );
     } catch (error: any) {
       Alert.alert("Registration failed", error.message);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function checkEmployeeApproval(currentUser: User) {
+    try {
+      setCheckingEmployee(true);
+  
+      const employeeSnap = await getDoc(doc(db, "employees", currentUser.uid));
+  
+      if (!employeeSnap.exists()) {
+        setEmployeeApproved(false);
+        return;
+      }
+  
+      const data = employeeSnap.data();
+  
+      setEmployeeApproved(data.approved === true && data.active === true);
+    } catch (error: any) {
+      console.log("Employee approval check failed:", error.message);
+      setEmployeeApproved(false);
+    } finally {
+      setCheckingEmployee(false);
     }
   }
 
@@ -301,7 +364,7 @@ export default function HomeScreen() {
     }
   }
 
-  if (checkingAuth || loadingActiveEntry) {
+  if (checkingAuth || loadingActiveEntry || checkingEmployee) {
     return (
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.center}>
@@ -341,6 +404,26 @@ export default function HomeScreen() {
 
           <Pressable style={styles.secondaryButton} onPress={register} disabled={loading}>
             <Text style={styles.secondaryText}>Create Account</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (!employeeApproved) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.center}>
+          <Text style={styles.companyName}>JCF Payroll</Text>
+          <Text style={styles.subtitle}>Account Pending Approval</Text>
+  
+          <Text style={styles.pendingText}>
+            Your account has been created, but an admin needs to approve it before
+            you can clock in or out.
+          </Text>
+  
+          <Pressable style={styles.logoutButton} onPress={() => signOut(auth)}>
+            <Text style={styles.logoutText}>Log Out</Text>
           </Pressable>
         </View>
       </SafeAreaView>
@@ -598,5 +681,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginTop: 6,
     marginBottom: 8,
+  },
+  pendingText: {
+    fontSize: 16,
+    color: "#334155",
+    textAlign: "center",
+    lineHeight: 24,
+    paddingHorizontal: 24,
+    marginTop: 8,
   },
 });

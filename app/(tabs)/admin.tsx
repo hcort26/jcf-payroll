@@ -26,6 +26,19 @@ import {
 
 const COMPANY_ID = "jcf-enterprise";
 
+type AdminPage = "overview" | "employees" | "jobSites" | "timeEntries";
+
+type EmployeeRecord = {
+  id: string;
+  uid: string;
+  email: string;
+  companyId: string;
+  role?: string;
+  approved?: boolean;
+  active?: boolean;
+  createdAt?: any;
+};
+
 type TimeEntry = {
   id: string;
   userId?: string;
@@ -125,6 +138,11 @@ export default function AdminScreen() {
   const [showThisWeekOnly, setShowThisWeekOnly] = useState(true);
   const [error, setError] = useState("");
 
+  const [activeAdminPage, setActiveAdminPage] = useState<AdminPage>("overview");
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const [employees, setEmployees] = useState<EmployeeRecord[]>([]);
+
   const [jobSites, setJobSites] = useState<JobSite[]>([]);
   const [newJobSiteName, setNewJobSiteName] = useState("");
   const [newJobSiteAddress, setNewJobSiteAddress] = useState("");
@@ -148,8 +166,7 @@ export default function AdminScreen() {
 
   useEffect(() => {
     if (user && isAdmin) {
-      loadAllTimeEntries();
-      loadJobSites();
+      loadAdminData();
     }
   }, [user, isAdmin]);
 
@@ -169,54 +186,102 @@ export default function AdminScreen() {
     }
   }
 
-  async function loadAllTimeEntries() {
-    try {
-      setLoadingEntries(true);
-      setError("");
-
-      const q = query(collection(db, "time_entries"));
-      const snapshot = await getDocs(q);
-
-      const loadedEntries: TimeEntry[] = snapshot.docs.map((docSnap) => ({
-        id: docSnap.id,
-        ...docSnap.data(),
-      }));
-
-      loadedEntries.sort((a, b) => {
-        const aTime = a.createdAt?.toDate?.()?.getTime?.() ?? 0;
-        const bTime = b.createdAt?.toDate?.()?.getTime?.() ?? 0;
-        return bTime - aTime;
-      });
-
-      setEntries(loadedEntries);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoadingEntries(false);
-      setRefreshing(false);
-    }
+  async function loadAdminData() {
+    await Promise.all([
+      loadAllTimeEntries(),
+      loadEmployees(),
+      loadJobSites(),
+    ]);
   }
-
-  async function loadJobSites() {
+  
+  async function loadEmployees() {
     try {
       setError("");
   
       const q = query(
-        collection(db, "job_sites"),
-        where("companyId", "==", COMPANY_ID),
-        where("active", "==", true)
+        collection(db, "employees"),
+        where("companyId", "==", COMPANY_ID)
       );
   
       const snapshot = await getDocs(q);
   
-      const loadedSites: JobSite[] = snapshot.docs.map((docSnap) => ({
+      const loadedEmployees: EmployeeRecord[] = snapshot.docs.map((docSnap) => ({
         id: docSnap.id,
-        ...(docSnap.data() as Omit<JobSite, "id">),
+        ...(docSnap.data() as Omit<EmployeeRecord, "id">),
       }));
   
-      loadedSites.sort((a, b) => a.name.localeCompare(b.name));
+      loadedEmployees.sort((a, b) => {
+        const aApproved = a.approved === true ? 1 : 0;
+        const bApproved = b.approved === true ? 1 : 0;
   
-      setJobSites(loadedSites);
+        if (aApproved !== bApproved) return aApproved - bApproved;
+  
+        return a.email.localeCompare(b.email);
+      });
+  
+      setEmployees(loadedEmployees);
+    } catch (err: any) {
+      setError(err.message);
+    }
+  }
+  
+  async function approveEmployee(employeeId: string) {
+    if (!user) return;
+  
+    try {
+      setError("");
+  
+      await updateDoc(doc(db, "employees", employeeId), {
+        approved: true,
+        active: true,
+        approvedBy: user.uid,
+        approvedByEmail: user.email,
+        approvedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+  
+      await loadEmployees();
+    } catch (err: any) {
+      setError(err.message);
+    }
+  }
+  
+  async function deactivateEmployee(employeeId: string) {
+    if (!user) return;
+  
+    try {
+      setError("");
+  
+      await updateDoc(doc(db, "employees", employeeId), {
+        active: false,
+        deactivatedBy: user.uid,
+        deactivatedByEmail: user.email,
+        deactivatedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+  
+      await loadEmployees();
+    } catch (err: any) {
+      setError(err.message);
+    }
+  }
+  
+  async function reactivateEmployee(employeeId: string) {
+    if (!user) return;
+  
+    try {
+      setError("");
+  
+      await updateDoc(doc(db, "employees", employeeId), {
+        approved: true,
+        active: true,
+        reactivatedBy: user.uid,
+        reactivatedByEmail: user.email,
+        reactivatedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+  
+      await loadEmployees();
     } catch (err: any) {
       setError(err.message);
     }
@@ -274,6 +339,59 @@ export default function AdminScreen() {
     }
   }
 
+  async function loadAllTimeEntries() {
+    try {
+      setLoadingEntries(true);
+      setError("");
+
+      const q = query(collection(db, "time_entries"));
+      const snapshot = await getDocs(q);
+
+      const loadedEntries: TimeEntry[] = snapshot.docs.map((docSnap) => ({
+        id: docSnap.id,
+        ...docSnap.data(),
+      }));
+
+      loadedEntries.sort((a, b) => {
+        const aTime = a.createdAt?.toDate?.()?.getTime?.() ?? 0;
+        const bTime = b.createdAt?.toDate?.()?.getTime?.() ?? 0;
+        return bTime - aTime;
+      });
+
+      setEntries(loadedEntries);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoadingEntries(false);
+      setRefreshing(false);
+    }
+  }
+
+  async function loadJobSites() {
+    try {
+      setError("");
+  
+      const q = query(
+        collection(db, "job_sites"),
+        where("companyId", "==", COMPANY_ID),
+        where("active", "==", true)
+      );
+  
+      const snapshot = await getDocs(q);
+  
+      const loadedSites: JobSite[] = snapshot.docs.map((docSnap) => ({
+        id: docSnap.id,
+        ...(docSnap.data() as Omit<JobSite, "id">),
+      }));
+  
+      loadedSites.sort((a, b) => a.name.localeCompare(b.name));
+  
+      setJobSites(loadedSites);
+    } catch (err: any) {
+      setError(err.message);
+    }
+  }
+
   async function closeActiveShift(entryId: string) {
     if (!user) return;
   
@@ -301,7 +419,8 @@ export default function AdminScreen() {
 
   async function handleRefresh() {
     setRefreshing(true);
-    await Promise.all([loadAllTimeEntries(), loadJobSites()]);
+    await loadAdminData();
+    setRefreshing(false);
   }
 
   const filteredEntries = useMemo(() => {
@@ -397,216 +516,318 @@ export default function AdminScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
         }
       >
-        <Text style={styles.title}>Admin Dashboard</Text>
-        <Text style={styles.subtitle}>Owner payroll overview</Text>
+        <View style={styles.adminHeader}>
+  <View>
+    <Text style={styles.title}>Admin</Text>
+    <Text style={styles.subtitle}>
+      {activeAdminPage === "overview" && "Overview"}
+      {activeAdminPage === "employees" && "Employee Management"}
+      {activeAdminPage === "jobSites" && "Job Sites"}
+      {activeAdminPage === "timeEntries" && "Time Entries"}
+    </Text>
+  </View>
+
+  <Pressable
+    style={styles.menuButton}
+    onPress={() => setMenuOpen((value) => !value)}
+  >
+    <Text style={styles.menuIcon}>☰</Text>
+  </Pressable>
+</View>
+
+{menuOpen && (
+  <View style={styles.menuCard}>
+    <Pressable
+      style={styles.menuItem}
+      onPress={() => {
+        setActiveAdminPage("overview");
+        setMenuOpen(false);
+      }}
+    >
+      <Text style={styles.menuItemText}>Overview</Text>
+    </Pressable>
+
+    <Pressable
+      style={styles.menuItem}
+      onPress={() => {
+        setActiveAdminPage("employees");
+        setMenuOpen(false);
+      }}
+    >
+      <Text style={styles.menuItemText}>Employees</Text>
+    </Pressable>
+
+    <Pressable
+      style={styles.menuItem}
+      onPress={() => {
+        setActiveAdminPage("jobSites");
+        setMenuOpen(false);
+      }}
+    >
+      <Text style={styles.menuItemText}>Job Sites</Text>
+    </Pressable>
+
+    <Pressable
+      style={styles.menuItem}
+      onPress={() => {
+        setActiveAdminPage("timeEntries");
+        setMenuOpen(false);
+      }}
+    >
+      <Text style={styles.menuItemText}>Time Entries</Text>
+    </Pressable>
+  </View>
+)}
 
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
-        <View style={styles.toggleRow}>
-          <Pressable
-            style={[
-              styles.toggleButton,
-              showThisWeekOnly && styles.toggleButtonActive,
-            ]}
-            onPress={() => setShowThisWeekOnly(true)}
-          >
-            <Text
-              style={[
-                styles.toggleText,
-                showThisWeekOnly && styles.toggleTextActive,
-              ]}
-            >
-              This Week
-            </Text>
-          </Pressable>
+        {activeAdminPage === "overview" && (
+  <>
+    <View style={styles.statsGrid}>
+      <View style={styles.statCard}>
+        <Text style={styles.statLabel}>Payroll Hours</Text>
+        <Text style={styles.statValue}>{formatMinutes(totalPayrollMinutes)}</Text>
+      </View>
 
-          <Pressable
-            style={[
-              styles.toggleButton,
-              !showThisWeekOnly && styles.toggleButtonActive,
-            ]}
-            onPress={() => setShowThisWeekOnly(false)}
-          >
-            <Text
-              style={[
-                styles.toggleText,
-                !showThisWeekOnly && styles.toggleTextActive,
-              ]}
-            >
-              All Time
-            </Text>
-          </Pressable>
-        </View>
+      <View style={styles.statCard}>
+        <Text style={styles.statLabel}>Employees</Text>
+        <Text style={styles.statValue}>{employees.length}</Text>
+      </View>
 
-        <View style={styles.statsGrid}>
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Payroll Hours</Text>
-            <Text style={styles.statValue}>{formatMinutes(totalPayrollMinutes)}</Text>
-          </View>
+      <View style={styles.statCard}>
+        <Text style={styles.statLabel}>Active</Text>
+        <Text style={styles.statValue}>{activeClockIns}</Text>
+      </View>
+    </View>
 
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Employees</Text>
-            <Text style={styles.statValue}>{employeeSummaries.length}</Text>
-          </View>
+    <Pressable style={styles.refreshButton} onPress={handleRefresh}>
+      <Text style={styles.refreshButtonText}>
+        {loadingEntries ? "Loading..." : "Refresh Dashboard"}
+      </Text>
+    </Pressable>
+  </>
+)}
 
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Active</Text>
-            <Text style={styles.statValue}>{activeClockIns}</Text>
-          </View>
-        </View>
+{activeAdminPage === "employees" && (
+  <>
+    <Text style={styles.sectionTitle}>Employees</Text>
 
-        <Pressable style={styles.refreshButton} onPress={handleRefresh}>
-          <Text style={styles.refreshButtonText}>
-            {loadingEntries ? "Loading..." : "Refresh Dashboard"}
-          </Text>
-        </Pressable>
-
-        <Text style={styles.sectionTitle}>Job Sites</Text>
-
-        <View style={styles.card}>
-        <Text style={styles.label}>New Job Site Name</Text>
-        <TextInput
-            style={styles.input}
-            placeholder="Example: Main Job Site"
-            value={newJobSiteName}
-            onChangeText={setNewJobSiteName}
-        />
-
-        <Text style={styles.label}>Address / Notes</Text>
-        <TextInput
-            style={styles.input}
-            placeholder="Example: 123 Main Street"
-            value={newJobSiteAddress}
-            onChangeText={setNewJobSiteAddress}
-        />
-
-        <Pressable
-            style={styles.addButton}
-            onPress={addJobSite}
-            disabled={savingJobSite}
-        >
-            <Text style={styles.addButtonText}>
-            {savingJobSite ? "Saving..." : "Add Job Site"}
-            </Text>
-        </Pressable>
-        </View>
-
-        {jobSites.length === 0 ? (
-        <View style={styles.card}>
-            <Text style={styles.emptyText}>No active job sites found.</Text>
-        </View>
-        ) : (
-        jobSites.map((site) => (
-            <View key={site.id} style={styles.card}>
-            <View style={styles.rowBetween}>
-                <View style={{ flex: 1 }}>
-                <Text style={styles.siteName}>{site.name}</Text>
-                <Text style={styles.normalText}>
-                    {site.address || "No address saved"}
-                </Text>
-                </View>
-
-                <Pressable
-                style={styles.deleteButton}
-                onPress={() => deleteJobSite(site.id)}
-                disabled={savingJobSite}
-                >
-                <Text style={styles.deleteButtonText}>Delete</Text>
-                </Pressable>
-            </View>
-            </View>
-        ))
-        )}
-
-        <Text style={styles.sectionTitle}>Employee Summary</Text>
-
-        {employeeSummaries.length === 0 ? (
-          <View style={styles.card}>
-            <Text style={styles.emptyText}>No employee hours found.</Text>
-          </View>
-        ) : (
-          employeeSummaries.map((employee) => (
-            <View key={employee.email} style={styles.card}>
+    {employees.length === 0 ? (
+      <View style={styles.card}>
+        <Text style={styles.emptyText}>No employees found.</Text>
+      </View>
+    ) : (
+      employees.map((employee) => (
+        <View key={employee.id} style={styles.card}>
+          <View style={styles.rowBetween}>
+            <View style={{ flex: 1 }}>
               <Text style={styles.employeeEmail}>{employee.email}</Text>
-
-              <View style={styles.summaryRow}>
-                <View>
-                  <Text style={styles.label}>Total Time</Text>
-                  <Text style={styles.value}>
-                    {formatMinutes(employee.totalMinutes)}
-                  </Text>
-                </View>
-
-                <View>
-                  <Text style={styles.label}>Completed</Text>
-                  <Text style={styles.value}>{employee.completedShifts}</Text>
-                </View>
-
-                <View>
-                  <Text style={styles.label}>Active</Text>
-                  <Text style={styles.value}>{employee.activeShifts}</Text>
-                </View>
-              </View>
-            </View>
-          ))
-        )}
-
-        <Text style={styles.sectionTitle}>Recent Time Entries</Text>
-
-        {filteredEntries.map((entry) => (
-          <View key={entry.id} style={styles.card}>
-            <View style={styles.rowBetween}>
-              <Text style={styles.employeeEmail}>
-                {entry.userEmail ?? "Unknown Employee"}
-              </Text>
-
-              <Text
-                style={[
-                  styles.pill,
-                  isActiveEntry(entry)
-                    ? styles.pillActive
-                    : styles.pillComplete,
-                ]}
-              >
-                {isActiveEntry(entry) ? "Active" : "Complete"}
+              <Text style={styles.normalText}>
+                {employee.approved ? "Approved" : "Pending Approval"} •{" "}
+                {employee.active ? "Active" : "Inactive"}
               </Text>
             </View>
 
-            <Text style={styles.label}>Job Site</Text>
-            <Text style={styles.normalText}>
-              {entry.jobSiteName ?? "Unknown Job Site"}
-            </Text>
-
-            <Text style={styles.label}>Clock In</Text>
-            <Text style={styles.normalText}>
-              {formatFirebaseTime(entry.clockInTime)}
-            </Text>
-
-            <Text style={styles.label}>Clock Out</Text>
-            <Text style={styles.normalText}>
-              {formatFirebaseTime(entry.clockOutTime)}
-            </Text>
-
-            <Text style={styles.label}>Total</Text>
-            <Text style={styles.durationText}>
-              {isActiveEntry(entry)
-                ? "Active"
-                : formatMinutes(
-                    getDurationMinutes(entry.clockInTime, entry.clockOutTime)
-                  )}
-            </Text>
-            {isActiveEntry(entry) && (
-            <Pressable
-                style={styles.adminActionButton}
-                onPress={() => closeActiveShift(entry.id)}
+            <Text
+              style={[
+                styles.pill,
+                employee.approved && employee.active
+                  ? styles.pillActive
+                  : styles.pillComplete,
+              ]}
             >
-                <Text style={styles.adminActionButtonText}>
-                Close Shift Now
-                </Text>
-            </Pressable>
-            )}
+              {employee.approved && employee.active ? "Active" : "Pending"}
+            </Text>
           </View>
-        ))}
+
+          {!employee.approved && (
+            <Pressable
+              style={styles.addButton}
+              onPress={() => approveEmployee(employee.id)}
+            >
+              <Text style={styles.addButtonText}>Approve Employee</Text>
+            </Pressable>
+          )}
+
+          {employee.approved && employee.active && (
+            <Pressable
+              style={styles.deleteButtonFull}
+              onPress={() => deactivateEmployee(employee.id)}
+            >
+              <Text style={styles.deleteButtonText}>Deactivate Employee</Text>
+            </Pressable>
+          )}
+
+          {employee.approved && !employee.active && (
+            <Pressable
+              style={styles.addButton}
+              onPress={() => reactivateEmployee(employee.id)}
+            >
+              <Text style={styles.addButtonText}>Reactivate Employee</Text>
+            </Pressable>
+          )}
+        </View>
+      ))
+    )}
+  </>
+)}
+
+{activeAdminPage === "jobSites" && (
+  <>
+    <Text style={styles.sectionTitle}>Job Sites</Text>
+
+    <View style={styles.card}>
+      <Text style={styles.label}>New Job Site Name</Text>
+      <TextInput
+        style={styles.input}
+        placeholder="Example: Main Job Site"
+        value={newJobSiteName}
+        onChangeText={setNewJobSiteName}
+      />
+
+      <Text style={styles.label}>Address / Notes</Text>
+      <TextInput
+        style={styles.input}
+        placeholder="Example: 123 Main Street"
+        value={newJobSiteAddress}
+        onChangeText={setNewJobSiteAddress}
+      />
+
+      <Pressable
+        style={styles.addButton}
+        onPress={addJobSite}
+        disabled={savingJobSite}
+      >
+        <Text style={styles.addButtonText}>
+          {savingJobSite ? "Saving..." : "Add Job Site"}
+        </Text>
+      </Pressable>
+    </View>
+
+    {jobSites.length === 0 ? (
+      <View style={styles.card}>
+        <Text style={styles.emptyText}>No active job sites found.</Text>
+      </View>
+    ) : (
+      jobSites.map((site) => (
+        <View key={site.id} style={styles.card}>
+          <View style={styles.rowBetween}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.siteName}>{site.name}</Text>
+              <Text style={styles.normalText}>
+                {site.address || "No address saved"}
+              </Text>
+            </View>
+
+            <Pressable
+              style={styles.deleteButton}
+              onPress={() => deleteJobSite(site.id)}
+              disabled={savingJobSite}
+            >
+              <Text style={styles.deleteButtonText}>Delete</Text>
+            </Pressable>
+          </View>
+        </View>
+      ))
+    )}
+  </>
+)}
+
+{activeAdminPage === "timeEntries" && (
+  <>
+    <View style={styles.toggleRow}>
+      <Pressable
+        style={[
+          styles.toggleButton,
+          showThisWeekOnly && styles.toggleButtonActive,
+        ]}
+        onPress={() => setShowThisWeekOnly(true)}
+      >
+        <Text
+          style={[
+            styles.toggleText,
+            showThisWeekOnly && styles.toggleTextActive,
+          ]}
+        >
+          This Week
+        </Text>
+      </Pressable>
+
+      <Pressable
+        style={[
+          styles.toggleButton,
+          !showThisWeekOnly && styles.toggleButtonActive,
+        ]}
+        onPress={() => setShowThisWeekOnly(false)}
+      >
+        <Text
+          style={[
+            styles.toggleText,
+            !showThisWeekOnly && styles.toggleTextActive,
+          ]}
+        >
+          All Time
+        </Text>
+      </Pressable>
+    </View>
+
+    <Text style={styles.sectionTitle}>Recent Time Entries</Text>
+
+    {filteredEntries.map((entry) => (
+      <View key={entry.id} style={styles.card}>
+        <View style={styles.rowBetween}>
+          <Text style={styles.employeeEmail}>
+            {entry.userEmail ?? "Unknown Employee"}
+          </Text>
+
+          <Text
+            style={[
+              styles.pill,
+              isActiveEntry(entry) ? styles.pillActive : styles.pillComplete,
+            ]}
+          >
+            {isActiveEntry(entry) ? "Active" : "Complete"}
+          </Text>
+        </View>
+
+        <Text style={styles.label}>Job Site</Text>
+        <Text style={styles.normalText}>
+          {entry.jobSiteName ?? "Unknown Job Site"}
+        </Text>
+
+        <Text style={styles.label}>Clock In</Text>
+        <Text style={styles.normalText}>
+          {formatFirebaseTime(entry.clockInTime)}
+        </Text>
+
+        <Text style={styles.label}>Clock Out</Text>
+        <Text style={styles.normalText}>
+          {formatFirebaseTime(entry.clockOutTime)}
+        </Text>
+
+        <Text style={styles.label}>Total</Text>
+        <Text style={styles.durationText}>
+          {isActiveEntry(entry)
+            ? "Active"
+            : formatMinutes(
+                getDurationMinutes(entry.clockInTime, entry.clockOutTime)
+              )}
+        </Text>
+
+        {isActiveEntry(entry) && (
+          <Pressable
+            style={styles.adminActionButton}
+            onPress={() => closeActiveShift(entry.id)}
+          >
+            <Text style={styles.adminActionButtonText}>
+              Close Shift Now
+            </Text>
+          </Pressable>
+        )}
+      </View>
+    ))}
+  </>
+)}
       </ScrollView>
     </SafeAreaView>
   );
@@ -834,5 +1055,50 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: "#0f172a",
     marginBottom: 4,
+  },
+  adminHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 20,
+    marginBottom: 12,
+  },
+  menuButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: "#0f172a",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  menuIcon: {
+    color: "white",
+    fontSize: 26,
+    fontWeight: "800",
+  },
+  menuCard: {
+    backgroundColor: "white",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    marginBottom: 16,
+    overflow: "hidden",
+  },
+  menuItem: {
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "#e2e8f0",
+  },
+  menuItemText: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: "#0f172a",
+  },
+  deleteButtonFull: {
+    backgroundColor: "#dc2626",
+    padding: 14,
+    borderRadius: 12,
+    alignItems: "center",
+    marginTop: 12,
   },
 });
