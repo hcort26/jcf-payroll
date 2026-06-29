@@ -1,13 +1,15 @@
 import { auth, db } from "@/src/firebase";
 import { onAuthStateChanged, User } from "firebase/auth";
 import {
+    addDoc,
     collection,
     doc,
     getDoc,
     getDocs,
     query,
     serverTimestamp,
-    updateDoc
+    updateDoc,
+    where
 } from "firebase/firestore";
 import React, { useEffect, useMemo, useState } from "react";
 import {
@@ -18,8 +20,11 @@ import {
     ScrollView,
     StyleSheet,
     Text,
+    TextInput,
     View
 } from "react-native";
+
+const COMPANY_ID = "jcf-enterprise";
 
 type TimeEntry = {
   id: string;
@@ -30,6 +35,15 @@ type TimeEntry = {
   clockInTime?: any;
   clockOutTime?: any;
   createdAt?: any;
+};
+
+type JobSite = {
+    id: string;
+    name: string;
+    address?: string;
+    companyId: string;
+    active: boolean;
+    createdAt?: any;
 };
 
 type EmployeeSummary = {
@@ -111,6 +125,11 @@ export default function AdminScreen() {
   const [showThisWeekOnly, setShowThisWeekOnly] = useState(true);
   const [error, setError] = useState("");
 
+  const [jobSites, setJobSites] = useState<JobSite[]>([]);
+  const [newJobSiteName, setNewJobSiteName] = useState("");
+  const [newJobSiteAddress, setNewJobSiteAddress] = useState("");
+  const [savingJobSite, setSavingJobSite] = useState(false);
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
@@ -130,6 +149,7 @@ export default function AdminScreen() {
   useEffect(() => {
     if (user && isAdmin) {
       loadAllTimeEntries();
+      loadJobSites();
     }
   }, [user, isAdmin]);
 
@@ -177,6 +197,83 @@ export default function AdminScreen() {
     }
   }
 
+  async function loadJobSites() {
+    try {
+      setError("");
+  
+      const q = query(
+        collection(db, "job_sites"),
+        where("companyId", "==", COMPANY_ID),
+        where("active", "==", true)
+      );
+  
+      const snapshot = await getDocs(q);
+  
+      const loadedSites: JobSite[] = snapshot.docs.map((docSnap) => ({
+        id: docSnap.id,
+        ...(docSnap.data() as Omit<JobSite, "id">),
+      }));
+  
+      loadedSites.sort((a, b) => a.name.localeCompare(b.name));
+  
+      setJobSites(loadedSites);
+    } catch (err: any) {
+      setError(err.message);
+    }
+  }
+  
+  async function addJobSite() {
+    const cleanName = newJobSiteName.trim();
+    const cleanAddress = newJobSiteAddress.trim();
+  
+    if (!cleanName) {
+      setError("Job site name is required.");
+      return;
+    }
+  
+    try {
+      setSavingJobSite(true);
+      setError("");
+  
+      await addDoc(collection(db, "job_sites"), {
+        name: cleanName,
+        address: cleanAddress || "",
+        companyId: COMPANY_ID,
+        active: true,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+  
+      setNewJobSiteName("");
+      setNewJobSiteAddress("");
+  
+      await loadJobSites();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSavingJobSite(false);
+    }
+  }
+  
+  async function deleteJobSite(siteId: string) {
+    try {
+      setSavingJobSite(true);
+      setError("");
+  
+      await updateDoc(doc(db, "job_sites", siteId), {
+        active: false,
+        deletedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+  
+      await loadJobSites();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSavingJobSite(false);
+    }
+  }
+
   async function closeActiveShift(entryId: string) {
     if (!user) return;
   
@@ -204,7 +301,7 @@ export default function AdminScreen() {
 
   async function handleRefresh() {
     setRefreshing(true);
-    await loadAllTimeEntries();
+    await Promise.all([loadAllTimeEntries(), loadJobSites()]);
   }
 
   const filteredEntries = useMemo(() => {
@@ -363,6 +460,63 @@ export default function AdminScreen() {
             {loadingEntries ? "Loading..." : "Refresh Dashboard"}
           </Text>
         </Pressable>
+
+        <Text style={styles.sectionTitle}>Job Sites</Text>
+
+        <View style={styles.card}>
+        <Text style={styles.label}>New Job Site Name</Text>
+        <TextInput
+            style={styles.input}
+            placeholder="Example: Main Job Site"
+            value={newJobSiteName}
+            onChangeText={setNewJobSiteName}
+        />
+
+        <Text style={styles.label}>Address / Notes</Text>
+        <TextInput
+            style={styles.input}
+            placeholder="Example: 123 Main Street"
+            value={newJobSiteAddress}
+            onChangeText={setNewJobSiteAddress}
+        />
+
+        <Pressable
+            style={styles.addButton}
+            onPress={addJobSite}
+            disabled={savingJobSite}
+        >
+            <Text style={styles.addButtonText}>
+            {savingJobSite ? "Saving..." : "Add Job Site"}
+            </Text>
+        </Pressable>
+        </View>
+
+        {jobSites.length === 0 ? (
+        <View style={styles.card}>
+            <Text style={styles.emptyText}>No active job sites found.</Text>
+        </View>
+        ) : (
+        jobSites.map((site) => (
+            <View key={site.id} style={styles.card}>
+            <View style={styles.rowBetween}>
+                <View style={{ flex: 1 }}>
+                <Text style={styles.siteName}>{site.name}</Text>
+                <Text style={styles.normalText}>
+                    {site.address || "No address saved"}
+                </Text>
+                </View>
+
+                <Pressable
+                style={styles.deleteButton}
+                onPress={() => deleteJobSite(site.id)}
+                disabled={savingJobSite}
+                >
+                <Text style={styles.deleteButtonText}>Delete</Text>
+                </Pressable>
+            </View>
+            </View>
+        ))
+        )}
 
         <Text style={styles.sectionTitle}>Employee Summary</Text>
 
@@ -644,5 +798,41 @@ const styles = StyleSheet.create({
   adminActionButtonText: {
     color: "white",
     fontWeight: "800",
+  },
+  input: {
+    backgroundColor: "white",
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    borderRadius: 10,
+    padding: 12,
+    fontSize: 15,
+    marginBottom: 10,
+  },
+  addButton: {
+    backgroundColor: "#16a34a",
+    padding: 14,
+    borderRadius: 12,
+    alignItems: "center",
+    marginTop: 8,
+  },
+  addButtonText: {
+    color: "white",
+    fontWeight: "800",
+  },
+  deleteButton: {
+    backgroundColor: "#dc2626",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  deleteButtonText: {
+    color: "white",
+    fontWeight: "800",
+  },
+  siteName: {
+    fontSize: 17,
+    fontWeight: "800",
+    color: "#0f172a",
+    marginBottom: 4,
   },
 });
