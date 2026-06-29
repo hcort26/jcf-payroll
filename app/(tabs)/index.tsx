@@ -340,7 +340,7 @@ export default function HomeScreen() {
           </Pressable>
 
           <Pressable style={styles.secondaryButton} onPress={register} disabled={loading}>
-            <Text style={styles.secondaryText}>Create Test Account</Text>
+            <Text style={styles.secondaryText}>Create Account</Text>
           </Pressable>
         </View>
       </SafeAreaView>

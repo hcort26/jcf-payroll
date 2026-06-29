@@ -27,14 +27,14 @@ export default function TabLayout() {
         name="explore"
         options={{
           title: 'Timesheets',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="paperplane.fill" color={color} />,
+          tabBarIcon: ({ color }) => <IconSymbol size={28} name="person.fill" color={color} />,
         }}
       />
       <Tabs.Screen
         name="admin"
         options={{
           title: 'Admin',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="paperplane.fill" color={color} />,
+          tabBarIcon: ({ color }) => <IconSymbol size={28} name="star.fill" color={color} />,
         }}
       />
     </Tabs>

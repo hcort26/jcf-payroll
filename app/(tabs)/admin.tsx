@@ -5,7 +5,9 @@ import {
     doc,
     getDoc,
     getDocs,
-    query
+    query,
+    serverTimestamp,
+    updateDoc
 } from "firebase/firestore";
 import React, { useEffect, useMemo, useState } from "react";
 import {
@@ -88,6 +90,16 @@ function isThisWeek(timestamp: any) {
   }
 }
 
+function isActiveEntry(entry: TimeEntry) {
+    const status = String(entry.status ?? "").trim().toLowerCase();
+  
+    return (
+      status === "clocked_in" ||
+      status === "active" ||
+      (!!entry.clockInTime && !entry.clockOutTime)
+    );
+  }
+
 export default function AdminScreen() {
   const [user, setUser] = useState<User | null>(null);
   const [checkingAuth, setCheckingAuth] = useState(true);
@@ -165,6 +177,31 @@ export default function AdminScreen() {
     }
   }
 
+  async function closeActiveShift(entryId: string) {
+    if (!user) return;
+  
+    try {
+      setLoadingEntries(true);
+      setError("");
+  
+      await updateDoc(doc(db, "time_entries", entryId), {
+        status: "clocked_out",
+        clockOutTime: serverTimestamp(),
+        adminClosed: true,
+        adminClosedBy: user.uid,
+        adminClosedByEmail: user.email,
+        adminClosedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+  
+      await loadAllTimeEntries();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoadingEntries(false);
+    }
+  }
+
   async function handleRefresh() {
     setRefreshing(true);
     await loadAllTimeEntries();
@@ -194,7 +231,7 @@ export default function AdminScreen() {
 
       const summary = map.get(email)!;
 
-      if (entry.status === "clocked_in") {
+      if (isActiveEntry(entry)) {
         summary.activeShifts += 1;
       } else {
         summary.completedShifts += 1;
@@ -216,7 +253,7 @@ export default function AdminScreen() {
   );
 
   const activeClockIns = filteredEntries.filter(
-    (entry) => entry.status === "clocked_in"
+    (entry) => isActiveEntry(entry)
   ).length;
 
   if (checkingAuth) {
@@ -372,12 +409,12 @@ export default function AdminScreen() {
               <Text
                 style={[
                   styles.pill,
-                  entry.status === "clocked_in"
+                  isActiveEntry(entry)
                     ? styles.pillActive
                     : styles.pillComplete,
                 ]}
               >
-                {entry.status === "clocked_in" ? "Active" : "Complete"}
+                {isActiveEntry(entry) ? "Active" : "Complete"}
               </Text>
             </View>
 
@@ -398,12 +435,22 @@ export default function AdminScreen() {
 
             <Text style={styles.label}>Total</Text>
             <Text style={styles.durationText}>
-              {entry.status === "clocked_in"
+              {isActiveEntry(entry)
                 ? "Active"
                 : formatMinutes(
                     getDurationMinutes(entry.clockInTime, entry.clockOutTime)
                   )}
             </Text>
+            {isActiveEntry(entry) && (
+            <Pressable
+                style={styles.adminActionButton}
+                onPress={() => closeActiveShift(entry.id)}
+            >
+                <Text style={styles.adminActionButtonText}>
+                Close Shift Now
+                </Text>
+            </Pressable>
+            )}
           </View>
         ))}
       </ScrollView>
@@ -586,5 +633,16 @@ const styles = StyleSheet.create({
   pillComplete: {
     backgroundColor: "#e2e8f0",
     color: "#334155",
+  },
+  adminActionButton: {
+    backgroundColor: "#dc2626",
+    padding: 12,
+    borderRadius: 10,
+    alignItems: "center",
+    marginTop: 14,
+  },
+  adminActionButtonText: {
+    color: "white",
+    fontWeight: "800",
   },
 });
