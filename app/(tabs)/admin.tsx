@@ -29,6 +29,8 @@ const COMPANY_ID = "jcf-enterprise";
 
 type AdminPage = "overview" | "employees" | "jobSites" | "timeEntries";
 
+type PayrollPeriod = "thisWeek" | "lastWeek" | "thisMonth" | "allTime" | "custom";
+
 type EmployeeRecord = {
   id: string;
   uid: string;
@@ -128,6 +130,125 @@ function isActiveEntry(entry: TimeEntry) {
     );
   }
 
+function startOfDay(date: Date) {
+    const copy = new Date(date);
+    copy.setHours(0, 0, 0, 0);
+    return copy;
+  }
+  
+function endOfDay(date: Date) {
+    const copy = new Date(date);
+    copy.setHours(23, 59, 59, 999);
+    return copy;
+  }
+  
+function parseCustomDate(value: string, end = false) {
+    const cleaned = value.trim();
+  
+    if (!cleaned) return null;
+  
+    const date = new Date(`${cleaned}T00:00:00`);
+  
+    if (Number.isNaN(date.getTime())) {
+      return null;
+    }
+  
+    return end ? endOfDay(date) : startOfDay(date);
+  }
+  
+function getPayrollDateRange(
+    period: PayrollPeriod,
+    customStartDate: string,
+    customEndDate: string
+  ) {
+    const now = new Date();
+  
+    if (period === "allTime") {
+      return {
+        label: "All Time",
+        start: null,
+        end: null,
+      };
+    }
+  
+    if (period === "custom") {
+      const start = parseCustomDate(customStartDate, false);
+      const end = parseCustomDate(customEndDate, true);
+  
+      return {
+        label:
+          customStartDate || customEndDate
+            ? `Custom: ${customStartDate || "Start"} to ${customEndDate || "End"}`
+            : "Custom Date Range",
+        start,
+        end,
+      };
+    }
+  
+    if (period === "thisMonth") {
+      const start = new Date(now.getFullYear(), now.getMonth(), 1);
+      const end = endOfDay(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+  
+      return {
+        label: "This Month",
+        start,
+        end,
+      };
+    }
+  
+    const thisWeekStart = startOfDay(new Date(now));
+    thisWeekStart.setDate(now.getDate() - now.getDay());
+  
+    const thisWeekEnd = endOfDay(new Date(thisWeekStart));
+    thisWeekEnd.setDate(thisWeekStart.getDate() + 6);
+  
+    if (period === "thisWeek") {
+      return {
+        label: "This Week",
+        start: thisWeekStart,
+        end: thisWeekEnd,
+      };
+    }
+  
+    const lastWeekStart = startOfDay(new Date(thisWeekStart));
+    lastWeekStart.setDate(thisWeekStart.getDate() - 7);
+  
+    const lastWeekEnd = endOfDay(new Date(lastWeekStart));
+    lastWeekEnd.setDate(lastWeekStart.getDate() + 6);
+  
+    return {
+      label: "Last Week",
+      start: lastWeekStart,
+      end: lastWeekEnd,
+    };
+  }
+  
+function isEntryInPayrollPeriod(
+    timestamp: any,
+    period: PayrollPeriod,
+    customStartDate: string,
+    customEndDate: string
+  ) {
+    if (period === "allTime") return true;
+    if (!timestamp) return false;
+  
+    try {
+      const entryDate = timestamp.toDate();
+      const { start, end } = getPayrollDateRange(
+        period,
+        customStartDate,
+        customEndDate
+      );
+  
+      if (start && entryDate < start) return false;
+      if (end && entryDate > end) return false;
+  
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
 function formatForEditInput(timestamp: any) {
     if (!timestamp) return "";
   
@@ -171,7 +292,9 @@ export default function AdminScreen() {
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [loadingEntries, setLoadingEntries] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [showThisWeekOnly, setShowThisWeekOnly] = useState(true);
+  const [payrollPeriod, setPayrollPeriod] = useState<PayrollPeriod>("thisWeek");
+  const [customStartDate, setCustomStartDate] = useState("");
+  const [customEndDate, setCustomEndDate] = useState("");
   const [error, setError] = useState("");
 
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
@@ -539,11 +662,21 @@ export default function AdminScreen() {
   }
 
   const filteredEntries = useMemo(() => {
-    return entries.filter((entry) => {
-      if (!showThisWeekOnly) return true;
-      return isThisWeek(entry.clockInTime);
-    });
-  }, [entries, showThisWeekOnly]);
+    return entries.filter((entry) =>
+      isEntryInPayrollPeriod(
+        entry.clockInTime,
+        payrollPeriod,
+        customStartDate,
+        customEndDate
+      )
+    );
+  }, [entries, payrollPeriod, customStartDate, customEndDate]);
+  
+  const payrollDateRange = getPayrollDateRange(
+    payrollPeriod,
+    customStartDate,
+    customEndDate
+  );
 
   const employeeSummaries = useMemo(() => {
     const map = new Map<string, EmployeeSummary>();
@@ -586,6 +719,128 @@ export default function AdminScreen() {
   const activeClockIns = filteredEntries.filter(
     (entry) => isActiveEntry(entry)
   ).length;
+
+  function renderPayrollPeriodSelector() {
+    return (
+      <View style={styles.periodCard}>
+        <Text style={styles.periodTitle}>Payroll Period</Text>
+        <Text style={styles.periodSubtitle}>{payrollDateRange.label}</Text>
+  
+        <View style={styles.periodGrid}>
+          <Pressable
+            style={[
+              styles.periodButton,
+              payrollPeriod === "thisWeek" && styles.periodButtonActive,
+            ]}
+            onPress={() => setPayrollPeriod("thisWeek")}
+          >
+            <Text
+              style={[
+                styles.periodButtonText,
+                payrollPeriod === "thisWeek" && styles.periodButtonTextActive,
+              ]}
+            >
+              This Week
+            </Text>
+          </Pressable>
+  
+          <Pressable
+            style={[
+              styles.periodButton,
+              payrollPeriod === "lastWeek" && styles.periodButtonActive,
+            ]}
+            onPress={() => setPayrollPeriod("lastWeek")}
+          >
+            <Text
+              style={[
+                styles.periodButtonText,
+                payrollPeriod === "lastWeek" && styles.periodButtonTextActive,
+              ]}
+            >
+              Last Week
+            </Text>
+          </Pressable>
+  
+          <Pressable
+            style={[
+              styles.periodButton,
+              payrollPeriod === "thisMonth" && styles.periodButtonActive,
+            ]}
+            onPress={() => setPayrollPeriod("thisMonth")}
+          >
+            <Text
+              style={[
+                styles.periodButtonText,
+                payrollPeriod === "thisMonth" && styles.periodButtonTextActive,
+              ]}
+            >
+              This Month
+            </Text>
+          </Pressable>
+  
+          <Pressable
+            style={[
+              styles.periodButton,
+              payrollPeriod === "allTime" && styles.periodButtonActive,
+            ]}
+            onPress={() => setPayrollPeriod("allTime")}
+          >
+            <Text
+              style={[
+                styles.periodButtonText,
+                payrollPeriod === "allTime" && styles.periodButtonTextActive,
+              ]}
+            >
+              All Time
+            </Text>
+          </Pressable>
+  
+          <Pressable
+            style={[
+              styles.periodButton,
+              payrollPeriod === "custom" && styles.periodButtonActive,
+            ]}
+            onPress={() => setPayrollPeriod("custom")}
+          >
+            <Text
+              style={[
+                styles.periodButtonText,
+                payrollPeriod === "custom" && styles.periodButtonTextActive,
+              ]}
+            >
+              Custom
+            </Text>
+          </Pressable>
+        </View>
+  
+        {payrollPeriod === "custom" && (
+          <View style={styles.customDateBox}>
+            <Text style={styles.label}>Custom Start Date</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="YYYY-MM-DD"
+              value={customStartDate}
+              onChangeText={setCustomStartDate}
+              autoCapitalize="none"
+            />
+  
+            <Text style={styles.label}>Custom End Date</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="YYYY-MM-DD"
+              value={customEndDate}
+              onChangeText={setCustomEndDate}
+              autoCapitalize="none"
+            />
+  
+            <Text style={styles.dateHint}>
+              Example: 2026-06-01 to 2026-06-30
+            </Text>
+          </View>
+        )}
+      </View>
+    );
+  }
 
   if (checkingAuth) {
     return (
@@ -695,6 +950,9 @@ export default function AdminScreen() {
 )}
 
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+        {(activeAdminPage === "overview" || activeAdminPage === "timeEntries") &&
+            renderPayrollPeriodSelector()}
 
         {activeAdminPage === "overview" && (
   <>
@@ -850,41 +1108,9 @@ export default function AdminScreen() {
 
 {activeAdminPage === "timeEntries" && (
   <>
-    <View style={styles.toggleRow}>
-      <Pressable
-        style={[
-          styles.toggleButton,
-          showThisWeekOnly && styles.toggleButtonActive,
-        ]}
-        onPress={() => setShowThisWeekOnly(true)}
-      >
-        <Text
-          style={[
-            styles.toggleText,
-            showThisWeekOnly && styles.toggleTextActive,
-          ]}
-        >
-          This Week
-        </Text>
-      </Pressable>
-
-      <Pressable
-        style={[
-          styles.toggleButton,
-          !showThisWeekOnly && styles.toggleButtonActive,
-        ]}
-        onPress={() => setShowThisWeekOnly(false)}
-      >
-        <Text
-          style={[
-            styles.toggleText,
-            !showThisWeekOnly && styles.toggleTextActive,
-          ]}
-        >
-          All Time
-        </Text>
-      </Pressable>
-    </View>
+    <Text style={styles.periodShowingText}>
+        Showing: {payrollDateRange.label}
+    </Text>
 
     <Text style={styles.sectionTitle}>Recent Time Entries</Text>
 
@@ -1307,5 +1533,66 @@ const styles = StyleSheet.create({
   reasonInput: {
     minHeight: 80,
     textAlignVertical: "top",
+  },
+  periodCard: {
+    backgroundColor: "white",
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    marginBottom: 16,
+  },
+  periodTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#0f172a",
+  },
+  periodSubtitle: {
+    color: "#64748b",
+    fontWeight: "700",
+    marginTop: 4,
+    marginBottom: 12,
+  },
+  periodGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  periodButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    backgroundColor: "white",
+  },
+  periodButtonActive: {
+    backgroundColor: "#0f172a",
+    borderColor: "#0f172a",
+  },
+  periodButtonText: {
+    color: "#334155",
+    fontWeight: "800",
+  },
+  periodButtonTextActive: {
+    color: "white",
+  },
+  customDateBox: {
+    marginTop: 14,
+    backgroundColor: "#f8fafc",
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  dateHint: {
+    color: "#64748b",
+    fontSize: 13,
+    marginTop: 4,
+  },
+  periodShowingText: {
+    color: "#475569",
+    fontWeight: "800",
+    marginBottom: 12,
   },
 });
