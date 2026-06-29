@@ -8,6 +8,7 @@ import {
     getDocs,
     query,
     serverTimestamp,
+    Timestamp,
     updateDoc,
     where
 } from "firebase/firestore";
@@ -127,6 +128,41 @@ function isActiveEntry(entry: TimeEntry) {
     );
   }
 
+function formatForEditInput(timestamp: any) {
+    if (!timestamp) return "";
+  
+    try {
+      const date = timestamp.toDate();
+  
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const day = String(date.getDate()).padStart(2, "0");
+      const hours = String(date.getHours()).padStart(2, "0");
+      const minutes = String(date.getMinutes()).padStart(2, "0");
+  
+      return `${year}-${month}-${day} ${hours}:${minutes}`;
+    } catch {
+      return "";
+    }
+  }
+  
+function parseEditDateTime(value: string) {
+    const cleaned = value.trim();
+  
+    if (!cleaned) {
+      throw new Error("Date/time cannot be blank.");
+    }
+  
+    const normalized = cleaned.replace(" ", "T");
+    const date = new Date(normalized);
+  
+    if (Number.isNaN(date.getTime())) {
+      throw new Error("Use format YYYY-MM-DD HH:mm, example 2026-06-29 17:30.");
+    }
+  
+    return Timestamp.fromDate(date);
+  }
+
 export default function AdminScreen() {
   const [user, setUser] = useState<User | null>(null);
   const [checkingAuth, setCheckingAuth] = useState(true);
@@ -137,6 +173,12 @@ export default function AdminScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [showThisWeekOnly, setShowThisWeekOnly] = useState(true);
   const [error, setError] = useState("");
+
+  const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
+  const [editClockIn, setEditClockIn] = useState("");
+  const [editClockOut, setEditClockOut] = useState("");
+  const [editReason, setEditReason] = useState("");
+  const [savingEdit, setSavingEdit] = useState(false);
 
   const [activeAdminPage, setActiveAdminPage] = useState<AdminPage>("overview");
   const [menuOpen, setMenuOpen] = useState(false);
@@ -414,6 +456,79 @@ export default function AdminScreen() {
       setError(err.message);
     } finally {
       setLoadingEntries(false);
+    }
+  }
+
+  function startEditingEntry(entry: TimeEntry) {
+    setEditingEntryId(entry.id);
+    setEditClockIn(formatForEditInput(entry.clockInTime));
+    setEditClockOut(formatForEditInput(entry.clockOutTime));
+    setEditReason("");
+    setError("");
+  }
+  
+  function cancelEditingEntry() {
+    setEditingEntryId(null);
+    setEditClockIn("");
+    setEditClockOut("");
+    setEditReason("");
+    setError("");
+  }
+  
+  async function saveTimeEntryEdit(entry: TimeEntry) {
+    if (!user) return;
+  
+    try {
+      const cleanReason = editReason.trim();
+  
+      if (!cleanReason) {
+        setError("Edit reason is required.");
+        return;
+      }
+  
+      setSavingEdit(true);
+      setError("");
+  
+      const newClockInTimestamp = parseEditDateTime(editClockIn);
+      const newClockOutTimestamp = editClockOut.trim()
+        ? parseEditDateTime(editClockOut)
+        : null;
+  
+      await updateDoc(doc(db, "time_entries", entry.id), {
+        clockInTime: newClockInTimestamp,
+        clockOutTime: newClockOutTimestamp,
+        status: newClockOutTimestamp ? "clocked_out" : "clocked_in",
+        adminEdited: true,
+        lastEditedBy: user.uid,
+        lastEditedByEmail: user.email,
+        lastEditedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+  
+      await addDoc(collection(db, "audit_logs"), {
+        type: "time_entry_edit",
+        timeEntryId: entry.id,
+        employeeUserId: entry.userId ?? "",
+        employeeEmail: entry.userEmail ?? "",
+        editedBy: user.uid,
+        editedByEmail: user.email,
+        reason: cleanReason,
+        oldClockInTime: entry.clockInTime ?? null,
+        oldClockOutTime: entry.clockOutTime ?? null,
+        oldStatus: entry.status ?? "",
+        newClockInTime: newClockInTimestamp,
+        newClockOutTime: newClockOutTimestamp,
+        newStatus: newClockOutTimestamp ? "clocked_out" : "clocked_in",
+        companyId: COMPANY_ID,
+        createdAt: serverTimestamp(),
+      });
+  
+      cancelEditingEntry();
+      await loadAllTimeEntries();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSavingEdit(false);
     }
   }
 
@@ -824,6 +939,62 @@ export default function AdminScreen() {
             </Text>
           </Pressable>
         )}
+
+        {editingEntryId === entry.id ? (
+        <View style={styles.editBox}>
+            <Text style={styles.label}>Edit Clock In</Text>
+            <TextInput
+            style={styles.input}
+            value={editClockIn}
+            onChangeText={setEditClockIn}
+            placeholder="YYYY-MM-DD HH:mm"
+            autoCapitalize="none"
+            />
+
+            <Text style={styles.label}>Edit Clock Out</Text>
+            <TextInput
+            style={styles.input}
+            value={editClockOut}
+            onChangeText={setEditClockOut}
+            placeholder="YYYY-MM-DD HH:mm or blank if active"
+            autoCapitalize="none"
+            />
+
+            <Text style={styles.label}>Reason for Edit</Text>
+            <TextInput
+            style={[styles.input, styles.reasonInput]}
+            value={editReason}
+            onChangeText={setEditReason}
+            placeholder="Example: Employee forgot to clock out"
+            multiline
+            />
+
+            <Pressable
+            style={styles.addButton}
+            onPress={() => saveTimeEntryEdit(entry)}
+            disabled={savingEdit}
+            >
+            <Text style={styles.addButtonText}>
+                {savingEdit ? "Saving..." : "Save Edit"}
+            </Text>
+            </Pressable>
+
+            <Pressable
+            style={styles.cancelButton}
+            onPress={cancelEditingEntry}
+            disabled={savingEdit}
+            >
+            <Text style={styles.cancelButtonText}>Cancel</Text>
+            </Pressable>
+        </View>
+        ) : (
+        <Pressable
+            style={styles.editButton}
+            onPress={() => startEditingEntry(entry)}
+        >
+            <Text style={styles.editButtonText}>Edit Time Entry</Text>
+        </Pressable>
+        )}
       </View>
     ))}
   </>
@@ -1100,5 +1271,41 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: "center",
     marginTop: 12,
+  },
+  editBox: {
+    backgroundColor: "#f8fafc",
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 14,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  editButton: {
+    backgroundColor: "#2563eb",
+    padding: 12,
+    borderRadius: 10,
+    alignItems: "center",
+    marginTop: 14,
+  },
+  editButtonText: {
+    color: "white",
+    fontWeight: "800",
+  },
+  cancelButton: {
+    backgroundColor: "white",
+    padding: 12,
+    borderRadius: 10,
+    alignItems: "center",
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+  },
+  cancelButtonText: {
+    color: "#0f172a",
+    fontWeight: "800",
+  },
+  reasonInput: {
+    minHeight: 80,
+    textAlignVertical: "top",
   },
 });
