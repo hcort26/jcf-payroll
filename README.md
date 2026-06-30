@@ -1,50 +1,67 @@
-# Welcome to your Expo app 👋
+# JCF Payroll
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+JCF Payroll is a mobile time-clock and payroll tracking app built with Expo, React Native, Firebase Authentication, and Firestore. The app allows employees to clock in and out from job sites, while admins can manage employees, approve accounts, manage job sites, edit time entries, and review payroll hours by period.
 
-## Get started
+## Features
 
-1. Install dependencies
+### Employee Features
 
-   ```bash
-   npm install
-   ```
+- Email/password login and registration
+- Account approval flow
+- Pending approval screen for new users
+- Clock in and clock out
+- Job-site selection
+- Location capture when clocking in/out
+- Persistent active clock-in after closing/reopening the app
+- Employee timesheet history
+- Weekly hour summary
 
-2. Start the app
+### Admin Features
 
-   ```bash
-   npx expo start
-   ```
+- Admin-only bottom tab visibility
+- Admin dashboard with internal menu sections
+- Employee approval and management
+- Activate/deactivate employees
+- Add and delete job sites
+- View time entries
+- Close active shifts manually
+- Edit time entries
+- Audit logs saved to Firestore when time entries are edited
+- Payroll period filtering:
+  - This Week
+  - Last Week
+  - This Month
+  - All Time
+  - Custom Start/End Dates
 
-In the output, you'll find options to open the app in a
+## Tech Stack
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+- Expo
+- React Native
+- Expo Router
+- TypeScript
+- Firebase Authentication
+- Firebase Firestore
+- Expo Location
+- EAS Update
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+## Project Structure
 
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
-```
-
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
-
-## Learn more
-
-To learn more about developing your project with Expo, look at the following resources:
-
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+```text
+jcf-payroll/
+├── app/
+│   ├── (tabs)/
+│   │   ├── index.tsx        # Employee clock-in / clock-out screen
+│   │   ├── explore.tsx      # Employee timesheets screen
+│   │   ├── admin.tsx        # Admin dashboard and management tools
+│   │   └── _layout.tsx      # Tab navigation and admin tab visibility
+│   └── _layout.tsx
+├── assets/
+│   └── images/
+│       └── jcf-logo.png
+├── src/
+│   └── firebase.ts          # Firebase config and exports
+├── app.json
+├── package.json
+├── tsconfig.json
+└── README.md
